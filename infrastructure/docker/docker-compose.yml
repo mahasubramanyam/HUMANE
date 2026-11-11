@@ -1,0 +1,25 @@
+version: "3.8"
+
+# Optional development service for local PostgreSQL
+# Local development does NOT require Docker; this is provided for developer convenience.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: humane-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: humane_user
+      POSTGRES_PASSWORD: humane_secure_password_placeholder
+      POSTGRES_DB: humane_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U humane_user -d humane_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

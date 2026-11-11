@@ -1,0 +1,1 @@
+"""Shared Multichannel Notifications Service."""
