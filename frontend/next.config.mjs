@@ -1,13 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Standalone output is enabled in Linux/Docker CI builds for minimal image size,
-  // but kept disabled in local Windows development to prevent sandbox EPERM symlink locks.
-  ...(process.env.DOCKER_BUILD === "1" || process.env.STANDALONE === "1" ? { output: "standalone" } : {}),
+  // Standalone output for containerized deployments; static HTML export for Azure Static Web Apps (Free tier)
+  output: process.env.DOCKER_BUILD === "1" ? "standalone" : "export",
   reactStrictMode: true,
-  // Disable webpack build worker on Windows to prevent concurrent directory creation EPERM locks
-  webpack: (config, { isServer }) => {
-    return config;
+  images: {
+    unoptimized: true,
   },
+  trailingSlash: true,
 };
 
 export default nextConfig;

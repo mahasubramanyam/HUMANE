@@ -26,6 +26,9 @@ param frontendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 @description('Backend FastAPI container image tag')
 param backendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
+@description('Optional administrator IPv4 address allowed to connect directly to PostgreSQL for database migrations and administration')
+param adminClientIp string = ''
+
 var uniqueSuffix = uniqueString(resourceGroup().id)
 var logAnalyticsName = '${appName}-log-${uniqueSuffix}'
 var appInsightsName = '${appName}-ai-${uniqueSuffix}'
@@ -36,7 +39,7 @@ var postgresServerName = '${appName}-pg-${uniqueSuffix}'
 var frontendAppName = '${appName}-web'
 var backendAppName = '${appName}-api'
 
-// 1. Log Analytics Workspace (Free 5 GB/month ingestion tier)
+// 1. Log Analytics Workspace (Free 5 GB/month ingestion tier with daily budget cap)
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
   name: logAnalyticsName
   location: location
@@ -45,6 +48,9 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
       name: 'PerGB2018'
     }
     retentionInDays: 30
+    workspaceCapping: {
+      dailyQuotaGb: 1
+    }
   }
 }
 
@@ -161,16 +167,6 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-03-01-pr
   }
 }
 
-// Allow Azure Services access to PostgreSQL
-resource pgFirewallAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-03-01-preview' = {
-  parent: postgresServer
-  name: 'AllowAllAzureServicesAndResourcesWithinAzureIps'
-  properties: {
-    startIpAddress: '0.0.0.0'
-    endIpAddress: '0.0.0.0'
-  }
-}
-
 // Create database
 resource postgresDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-03-01-preview' = {
   parent: postgresServer
@@ -193,6 +189,26 @@ resource acaEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' = {
         sharedKey: logAnalytics.listKeys().primarySharedKey
       }
     }
+  }
+}
+
+// Restricted PostgreSQL Firewall: Container Apps environment outbound IPs only
+resource pgFirewallAca 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-03-01-preview' = [for (ip, i) in acaEnvironment.properties.outboundIpAddresses: {
+  parent: postgresServer
+  name: 'AllowContainerAppEgress-${i}'
+  properties: {
+    startIpAddress: ip
+    endIpAddress: ip
+  }
+}]
+
+// Optional administrator IP for migrations / management
+resource pgFirewallAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-03-01-preview' = if (!empty(adminClientIp)) {
+  parent: postgresServer
+  name: 'AllowAdminClientIp'
+  properties: {
+    startIpAddress: adminClientIp
+    endIpAddress: adminClientIp
   }
 }
 
