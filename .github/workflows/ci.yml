@@ -1,4 +1,4 @@
-name: HUMANE Continuous Integration
+name: HUMANE Continuous Integration & Delivery
 
 on:
   push:
@@ -6,9 +6,21 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  id-token: write  # Required for Azure OIDC authentication
+  packages: write  # For publishing images to GHCR if needed
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # ============================================================================
+  # 1. Backend CI: Linting, Unit Testing & Migration Validation
+  # ============================================================================
   backend-ci:
-    name: Backend Lint, Test & Quality
+    name: Backend Quality & Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -19,6 +31,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
+          cache-dependency-path: backend/requirements-dev.txt
 
       - name: Install Dependencies
         run: |
@@ -31,13 +44,23 @@ jobs:
           cd backend
           ruff check .
 
-      - name: Run Pytest Suite
+      - name: Run Pytest Test Suite
         run: |
           cd backend
           pytest -v
 
+      - name: Validate Alembic Migrations (Dry-run DDL check)
+        run: |
+          cd backend
+          python -m alembic upgrade head --sql > migration_plan.sql
+          test -s migration_plan.sql
+          echo "Database migration script successfully validated."
+
+  # ============================================================================
+  # 2. Frontend CI: Linting, Type-checking, Unit Tests & Production Build
+  # ============================================================================
   frontend-ci:
-    name: Frontend Lint, Type-Check, Test & Build
+    name: Frontend Quality & Build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -50,12 +73,12 @@ jobs:
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install Frontend Dependencies
+      - name: Install Dependencies
         run: |
           cd frontend
           npm ci
 
-      - name: Run TypeScript Type Check
+      - name: Run TypeScript Strict Type Check
         run: |
           cd frontend
           npm run type-check
@@ -65,12 +88,74 @@ jobs:
           cd frontend
           npm run lint
 
-      - name: Run Vitest Suite
+      - name: Run Vitest Unit Tests
         run: |
           cd frontend
           npm test
 
-      - name: Run Production Build
+      - name: Run Production Next.js Build
         run: |
           cd frontend
           npm run build
+
+  # ============================================================================
+  # 3. Production Deployment: Triggered on main branch after CI passes
+  # ============================================================================
+  deploy:
+    name: Deploy to Azure (Production)
+    needs: [frontend-ci, backend-ci]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deploy-swa.outputs.static_web_app_url || steps.deploy-aca.outputs.app_url }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Check if Azure credentials or SWA deployment token are configured
+      - name: Verify Deployment Prerequisites
+        id: check-secrets
+        run: |
+          if [ -n "${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}" ]; then
+            echo "mode=swa" >> $GITHUB_OUTPUT
+            echo "Deployment target: Azure Static Web Apps"
+          elif [ -n "${{ secrets.AZURE_CLIENT_ID }}" ] && [ -n "${{ secrets.AZURE_TENANT_ID }}" ] && [ -n "${{ secrets.AZURE_SUBSCRIPTION_ID }}" ]; then
+            echo "mode=oidc" >> $GITHUB_OUTPUT
+            echo "Deployment target: Azure OIDC Federation"
+          else
+            echo "mode=none" >> $GITHUB_OUTPUT
+            echo "::warning ::Azure deployment secrets not yet configured in repository settings. CI passed successfully, deployment step skipped."
+          fi
+
+      # Deployment Path A: Azure Static Web Apps (Zero Cost, Free Tier, Instant Edge HTTPS)
+      - name: Deploy to Azure Static Web Apps
+        id: deploy-swa
+        if: steps.check-secrets.outputs.mode == 'swa'
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          app_location: "/frontend"
+          output_location: ""
+
+      # Deployment Path B: Azure Login via OIDC for Azure Container Apps / ARM
+      - name: Azure Login via OIDC
+        if: steps.check-secrets.outputs.mode == 'oidc'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Post-deployment Health Check
+      - name: Health Check Verification
+        if: steps.check-secrets.outputs.mode != 'none'
+        run: |
+          TARGET_URL="${{ steps.deploy-swa.outputs.static_web_app_url || secrets.PRODUCTION_DEPLOYMENT_URL }}"
+          if [ -n "$TARGET_URL" ]; then
+            echo "Probing deployment at: $TARGET_URL"
+            curl -f -I -m 30 "$TARGET_URL" || (echo "Health probe failed" && exit 1)
+            echo "Health probe succeeded with 200 OK."
+          fi

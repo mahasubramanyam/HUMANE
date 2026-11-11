@@ -1,0 +1,14 @@
+.git
+.github
+.next
+.vscode
+.idea
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+coverage
+e2e
+tests
+*.tsbuildinfo

@@ -1,0 +1,326 @@
+// ==============================================================================
+// HUMANE — Complete Azure Infrastructure Definition (Bicep)
+// Tailored for Azure for Students ($100 budget optimization)
+// ==============================================================================
+
+@description('Deployment environment name (e.g. dev, prod)')
+param environment string = 'prod'
+
+@description('Azure primary region for resource deployment')
+param location string = resourceGroup().location
+
+@description('Project identifier')
+param appName string = 'humane'
+
+@description('PostgreSQL administrator login')
+@secure()
+param dbAdminUser string = 'humane_admin'
+
+@description('PostgreSQL administrator password')
+@secure()
+param dbAdminPassword string
+
+@description('Frontend Next.js container image tag (e.g. ghcr.io/mahasubramanyam/humane-frontend:latest)')
+param frontendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
+
+@description('Backend FastAPI container image tag')
+param backendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
+
+var uniqueSuffix = uniqueString(resourceGroup().id)
+var logAnalyticsName = '${appName}-log-${uniqueSuffix}'
+var appInsightsName = '${appName}-ai-${uniqueSuffix}'
+var storageAccountName = '${appName}st${uniqueSuffix}'
+var keyVaultName = '${appName}-kv-${take(uniqueSuffix, 8)}'
+var acaEnvName = '${appName}-aca-env-${uniqueSuffix}'
+var postgresServerName = '${appName}-pg-${uniqueSuffix}'
+var frontendAppName = '${appName}-web'
+var backendAppName = '${appName}-api'
+
+// 1. Log Analytics Workspace (Free 5 GB/month ingestion tier)
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
+  name: logAnalyticsName
+  location: location
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+  }
+}
+
+// 2. Application Insights (Connected to Log Analytics Workspace)
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: appInsightsName
+  location: location
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: logAnalytics.id
+    IngestionMode: 'LogAnalytics'
+  }
+}
+
+// 3. User-Assigned Managed Identity for secure, passwordless intra-service auth
+resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${appName}-id-${uniqueSuffix}'
+  location: location
+}
+
+// 4. Azure Key Vault (Standard Tier - Pay only pennies per 10k ops)
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: keyVaultName
+  location: location
+  properties: {
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    tenantId: subscription().tenantId
+    enableRbacAuthorization: true
+    enableSoftDelete: true
+    softDeleteRetentionInDays: 7
+  }
+}
+
+// 5. Azure Blob Storage (Standard LRS Hot tier for sensitive documents)
+resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+  name: storageAccountName
+  location: location
+  sku: {
+    name: 'Standard_LRS'
+  }
+  kind: 'StorageV2'
+  properties: {
+    accessTier: 'Hot'
+    supportsHttpsTrafficOnly: true
+    minimumTlsVersion: 'TLS1_2'
+    allowBlobPublicAccess: false
+    networkAcls: {
+      bypass: 'AzureServices'
+      defaultAction: 'Allow'
+    }
+  }
+}
+
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
+  parent: storageAccount
+  name: 'default'
+}
+
+resource sensitiveDocsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  parent: blobService
+  name: 'humane-sensitive-documents'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+// 6. Azure Database for PostgreSQL Flexible Server (Burstable B1ms for student credit preservation)
+resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-03-01-preview' = {
+  name: postgresServerName
+  location: location
+  sku: {
+    name: 'Standard_B1ms'
+    tier: 'Burstable'
+  }
+  properties: {
+    version: '16'
+    administratorLogin: dbAdminUser
+    administratorLoginPassword: dbAdminPassword
+    storage: {
+      storageSizeGB: 32
+      autoGrow: 'Disabled'
+    }
+    backup: {
+      backupRetentionDays: 7
+      geoRedundantBackup: 'Disabled'
+    }
+    highAvailability: {
+      mode: 'Disabled'
+    }
+  }
+}
+
+// Allow Azure Services access to PostgreSQL
+resource pgFirewallAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-03-01-preview' = {
+  parent: postgresServer
+  name: 'AllowAllAzureServicesAndResourcesWithinAzureIps'
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '0.0.0.0'
+  }
+}
+
+// Create database
+resource postgresDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-03-01-preview' = {
+  parent: postgresServer
+  name: 'humane_db'
+  properties: {
+    charset: 'UTF8'
+    collation: 'en_US.utf8'
+  }
+}
+
+// 7. Azure Container Apps Managed Environment (Consumption Serverless Tier)
+resource acaEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' = {
+  name: acaEnvName
+  location: location
+  properties: {
+    appLogsConfiguration: {
+      destination: 'log-analytics'
+      logAnalyticsConfiguration: {
+        customerId: logAnalytics.properties.customerId
+        sharedKey: logAnalytics.listKeys().primarySharedKey
+      }
+    }
+  }
+}
+
+// 8. Backend FastAPI Container App (Scale-to-zero enabled: $0 when idle)
+resource backendApp 'Microsoft.App/containerApps@2023-05-01' = {
+  name: backendAppName
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${managedIdentity.id}': {}
+    }
+  }
+  properties: {
+    managedEnvironmentId: acaEnvironment.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: 8000
+        transport: 'auto'
+        allowInsecure: false
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'backend'
+          image: backendImage
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+          env: [
+            {
+              name: 'ENVIRONMENT'
+              value: environment
+            }
+            {
+              name: 'DEBUG'
+              value: 'false'
+            }
+            {
+              name: 'POSTGRES_HOST'
+              value: postgresServer.properties.fullyQualifiedDomainName
+            }
+            {
+              name: 'POSTGRES_DB'
+              value: 'humane_db'
+            }
+            {
+              name: 'POSTGRES_USER'
+              value: dbAdminUser
+            }
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              value: appInsights.properties.ConnectionString
+            }
+          ]
+          probes: [
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/healthz'
+                port: 8000
+              }
+              initialDelaySeconds: 5
+              periodSeconds: 15
+            }
+          ]
+        }
+      ]
+      scale: {
+        minReplicas: 0
+        maxReplicas: 3
+        rules: [
+          {
+            name: 'http-scaling'
+            http: {
+              metadata: {
+                concurrentRequests: '50'
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
+// 9. Frontend Next.js Container App (or Static Web App)
+resource frontendApp 'Microsoft.App/containerApps@2023-05-01' = {
+  name: frontendAppName
+  location: location
+  properties: {
+    managedEnvironmentId: acaEnvironment.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: 3000
+        transport: 'auto'
+        allowInsecure: false
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'frontend'
+          image: frontendImage
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+          env: [
+            {
+              name: 'NODE_ENV'
+              value: 'production'
+            }
+            {
+              name: 'NEXT_PUBLIC_APP_ENV'
+              value: environment
+            }
+            {
+              name: 'NEXT_PUBLIC_API_URL'
+              value: 'https://${backendApp.properties.configuration.ingress.fqdn}/api/v1'
+            }
+          ]
+        }
+      ]
+      scale: {
+        minReplicas: 0
+        maxReplicas: 2
+        rules: [
+          {
+            name: 'http-scaling'
+            http: {
+              metadata: {
+                concurrentRequests: '100'
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
+// Outputs
+output frontendUrl string = 'https://${frontendApp.properties.configuration.ingress.fqdn}'
+output backendUrl string = 'https://${backendApp.properties.configuration.ingress.fqdn}'
+output postgresFqdn string = postgresServer.properties.fullyQualifiedDomainName
+output keyVaultUri string = keyVault.properties.vaultUri
