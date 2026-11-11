@@ -125,7 +125,8 @@ jobs:
             echo "Deployment target: Azure OIDC Federation"
           else
             echo "mode=none" >> $GITHUB_OUTPUT
-            echo "::warning ::Azure deployment secrets not yet configured in repository settings. CI passed successfully, deployment step skipped."
+            echo "::error ::Azure deployment secrets are not configured in repository settings. Set AZURE_STATIC_WEB_APPS_API_TOKEN or Azure OIDC credentials (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID) to deploy. Halting deployment to prevent misleading deployment success."
+            exit 1
           fi
 
       # Deployment Path A: Azure Static Web Apps (Zero Cost, Free Tier, Instant Edge HTTPS)

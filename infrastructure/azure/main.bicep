@@ -82,6 +82,26 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
+// Key Vault Secrets User role assignment for Managed Identity
+resource keyVaultSecretsUserRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, managedIdentity.id, '4633458b-17de-408a-b874-0445c86b69e6')
+  scope: keyVault
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
+    principalId: managedIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Store Database Password in Key Vault
+resource dbPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'postgres-password'
+  properties: {
+    value: dbAdminPassword
+  }
+}
+
 // 5. Azure Blob Storage (Standard LRS Hot tier for sensitive documents)
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
@@ -189,6 +209,13 @@ resource backendApp 'Microsoft.App/containerApps@2023-05-01' = {
   properties: {
     managedEnvironmentId: acaEnvironment.id
     configuration: {
+      secrets: [
+        {
+          name: 'postgres-password'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/postgres-password'
+          identity: managedIdentity.id
+        }
+      ]
       ingress: {
         external: true
         targetPort: 8000
@@ -225,6 +252,10 @@ resource backendApp 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'POSTGRES_USER'
               value: dbAdminUser
+            }
+            {
+              name: 'POSTGRES_PASSWORD'
+              secretRef: 'postgres-password'
             }
             {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
