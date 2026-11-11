@@ -1,0 +1,16 @@
+{
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/_next/*", "/images/*", "*.{css,js,json,ico,png,jpg,jpeg,svg,webp,woff,woff2,ttf}"]
+  },
+  "trailingSlash": "always",
+  "mimeTypes": {
+    ".json": "application/json"
+  },
+  "responseOverrides": {
+    "404": {
+      "rewrite": "/404/index.html",
+      "statusCode": 404
+    }
+  }
+}

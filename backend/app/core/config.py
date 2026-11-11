@@ -1,4 +1,4 @@
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,16 +38,44 @@ class Settings(BaseSettings):
             return v
         return ["http://localhost:3000"]
 
-    # Database
+    # Database — individual components (injected by Azure Container Apps via Bicep)
     POSTGRES_USER: str = "humane_user"
     POSTGRES_PASSWORD: str = "humane_secure_password_placeholder"
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "humane_db"
 
-    # Database URLs (Async for FastAPI runtime, Sync for Alembic)
-    DATABASE_URL: str = "postgresql+asyncpg://humane_user:humane_secure_password_placeholder@localhost:5432/humane_db"
-    DATABASE_SYNC_URL: str = "postgresql+psycopg2://humane_user:humane_secure_password_placeholder@localhost:5432/humane_db"
+    # Database URLs — assembled from components at startup so individual env vars
+    # injected by the Container App (POSTGRES_HOST, POSTGRES_PASSWORD, etc.) are
+    # always used even when DATABASE_URL / DATABASE_SYNC_URL are not explicitly set.
+    DATABASE_URL: str = ""
+    DATABASE_SYNC_URL: str = ""
+
+    @model_validator(mode="after")
+    def assemble_database_urls(self) -> "Settings":
+        """Build DATABASE_URL and DATABASE_SYNC_URL from POSTGRES_* components.
+
+        Any explicitly provided DATABASE_URL / DATABASE_SYNC_URL value takes
+        precedence (useful for local development with a custom connection string).
+        When the value is empty (the default), the URL is assembled from the
+        individual POSTGRES_* environment variables that Azure Container Apps
+        injects at runtime.
+        """
+        user = self.POSTGRES_USER
+        password = self.POSTGRES_PASSWORD
+        host = self.POSTGRES_HOST
+        port = self.POSTGRES_PORT
+        db = self.POSTGRES_DB
+
+        if not self.DATABASE_URL:
+            self.DATABASE_URL = (
+                f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"
+            )
+        if not self.DATABASE_SYNC_URL:
+            self.DATABASE_SYNC_URL = (
+                f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db}"
+            )
+        return self
 
     # Security & Session Management
     SESSION_SECRET_KEY: str = "dev_secret_key_change_me_to_minimum_32_chars_in_production"

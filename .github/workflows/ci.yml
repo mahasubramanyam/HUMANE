@@ -94,6 +94,12 @@ jobs:
           npm test
 
       - name: Run Production Next.js Build
+        env:
+          # NEXT_PUBLIC_* vars are baked into the bundle at build time for static exports.
+          # Set NEXT_PUBLIC_API_URL here (from a repository secret or variable) so API
+          # calls added in future will resolve correctly without a rebuild.
+          # Leave empty during the presentation-only phase; the app makes no API calls yet.
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
         run: |
           cd frontend
           npm run build

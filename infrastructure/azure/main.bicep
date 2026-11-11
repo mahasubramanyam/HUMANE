@@ -20,14 +20,22 @@ param dbAdminUser string = 'humane_admin'
 @secure()
 param dbAdminPassword string
 
-@description('Frontend Next.js container image tag (e.g. ghcr.io/mahasubramanyam/humane-frontend:latest)')
-param frontendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
-
 @description('Backend FastAPI container image tag')
 param backendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
 @description('Optional administrator IPv4 address allowed to connect directly to PostgreSQL for database migrations and administration')
 param adminClientIp string = ''
+
+@description('Session signing secret — minimum 32 characters. Store in Key Vault or pass as a secure param.')
+@secure()
+param sessionSecretKey string
+
+@description('CSRF signing secret — minimum 32 characters. Store in Key Vault or pass as a secure param.')
+@secure()
+param csrfSecretKey string
+
+@description('Production frontend origin (e.g. https://happy-moon-abc123.azurestaticapps.net). Used to configure backend CORS.')
+param frontendOrigin string = ''
 
 var uniqueSuffix = uniqueString(resourceGroup().id)
 var logAnalyticsName = '${appName}-log-${uniqueSuffix}'
@@ -36,7 +44,6 @@ var storageAccountName = '${appName}st${uniqueSuffix}'
 var keyVaultName = '${appName}-kv-${take(uniqueSuffix, 8)}'
 var acaEnvName = '${appName}-aca-env-${uniqueSuffix}'
 var postgresServerName = '${appName}-pg-${uniqueSuffix}'
-var frontendAppName = '${appName}-web'
 var backendAppName = '${appName}-api'
 
 // 1. Log Analytics Workspace (Free 5 GB/month ingestion tier with daily budget cap)
@@ -105,6 +112,23 @@ resource dbPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   name: 'postgres-password'
   properties: {
     value: dbAdminPassword
+  }
+}
+
+// Store Session and CSRF secrets in Key Vault
+resource sessionSecretKvSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'session-secret-key'
+  properties: {
+    value: sessionSecretKey
+  }
+}
+
+resource csrfSecretKvSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'csrf-secret-key'
+  properties: {
+    value: csrfSecretKey
   }
 }
 
@@ -231,6 +255,16 @@ resource backendApp 'Microsoft.App/containerApps@2023-05-01' = {
           keyVaultUrl: '${keyVault.properties.vaultUri}secrets/postgres-password'
           identity: managedIdentity.id
         }
+        {
+          name: 'session-secret-key'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/session-secret-key'
+          identity: managedIdentity.id
+        }
+        {
+          name: 'csrf-secret-key'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/csrf-secret-key'
+          identity: managedIdentity.id
+        }
       ]
       ingress: {
         external: true
@@ -277,6 +311,22 @@ resource backendApp 'Microsoft.App/containerApps@2023-05-01' = {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
               value: appInsights.properties.ConnectionString
             }
+            {
+              name: 'SESSION_SECRET_KEY'
+              secretRef: 'session-secret-key'
+            }
+            {
+              name: 'CSRF_SECRET_KEY'
+              secretRef: 'csrf-secret-key'
+            }
+            {
+              name: 'SESSION_SECURE_COOKIE'
+              value: 'true'
+            }
+            {
+              name: 'CORS_ORIGINS'
+              value: !empty(frontendOrigin) ? frontendOrigin : 'http://localhost:3000'
+            }
           ]
           probes: [
             {
@@ -309,65 +359,11 @@ resource backendApp 'Microsoft.App/containerApps@2023-05-01' = {
   }
 }
 
-// 9. Frontend Next.js Container App (or Static Web App)
-resource frontendApp 'Microsoft.App/containerApps@2023-05-01' = {
-  name: frontendAppName
-  location: location
-  properties: {
-    managedEnvironmentId: acaEnvironment.id
-    configuration: {
-      ingress: {
-        external: true
-        targetPort: 3000
-        transport: 'auto'
-        allowInsecure: false
-      }
-    }
-    template: {
-      containers: [
-        {
-          name: 'frontend'
-          image: frontendImage
-          resources: {
-            cpu: json('0.25')
-            memory: '0.5Gi'
-          }
-          env: [
-            {
-              name: 'NODE_ENV'
-              value: 'production'
-            }
-            {
-              name: 'NEXT_PUBLIC_APP_ENV'
-              value: environment
-            }
-            {
-              name: 'NEXT_PUBLIC_API_URL'
-              value: 'https://${backendApp.properties.configuration.ingress.fqdn}/api/v1'
-            }
-          ]
-        }
-      ]
-      scale: {
-        minReplicas: 0
-        maxReplicas: 2
-        rules: [
-          {
-            name: 'http-scaling'
-            http: {
-              metadata: {
-                concurrentRequests: '100'
-              }
-            }
-          }
-        ]
-      }
-    }
-  }
-}
+// NOTE: Frontend is served by Azure Static Web Apps (Free tier) provisioned via
+// static-web-app.bicep. No Container App is needed for the frontend.
+// The frontendAppName variable is retained for naming consistency only.
 
 // Outputs
-output frontendUrl string = 'https://${frontendApp.properties.configuration.ingress.fqdn}'
 output backendUrl string = 'https://${backendApp.properties.configuration.ingress.fqdn}'
 output postgresFqdn string = postgresServer.properties.fullyQualifiedDomainName
 output keyVaultUri string = keyVault.properties.vaultUri
