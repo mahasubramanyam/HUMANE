@@ -128,7 +128,7 @@ export function Hero() {
           <span className="text-[10px] sm:text-xs font-semibold tracking-widest uppercase text-white/70">
             Scroll to Discover
           </span>
-          <ArrowDown className="h-4 w-4 animate-bounce text-white/80" />
+          <ArrowDown className="h-4 w-4 motion-safe:animate-bounce text-white/80" />
         </a>
       </div>
     </section>
