@@ -3,7 +3,37 @@ import { Badge } from "@/components/ui/badge";
 import { HeartHandshake, ShieldCheck, Lock, Activity } from "lucide-react";
 import { EcosystemCard } from "./ecosystem-card";
 
+export function getApiHealthUrl(apiUrl?: string): string {
+  let browserRuntimeUrl: string | undefined;
+  if (typeof window !== "undefined") {
+    const env = (
+      window as unknown as {
+        __HUMANE_ENV__?: { apiUrl?: string; NEXT_PUBLIC_API_URL?: string };
+      }
+    ).__HUMANE_ENV__;
+    browserRuntimeUrl = env?.apiUrl || env?.NEXT_PUBLIC_API_URL;
+  }
+
+  const rawBase = (
+    apiUrl ??
+    browserRuntimeUrl ??
+    process.env.HUMANE_API_URL ??
+    process.env.NEXT_PUBLIC_API_URL ??
+    (process.env.NODE_ENV === "production" ? "/api/v1" : "http://localhost:8000/api/v1")
+  )
+    .trim()
+    .replace(/\/+$/, "");
+
+  const base =
+    rawBase ||
+    (process.env.NODE_ENV === "production" ? "/api/v1" : "http://localhost:8000/api/v1");
+
+  return base.endsWith("/api/v1") ? `${base}/health` : `${base}/api/v1/health`;
+}
+
 export function AppShell() {
+  const healthUrl = getApiHealthUrl();
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       {/* Header */}
@@ -21,7 +51,7 @@ export function AppShell() {
               <Activity className="h-3.5 w-3.5 text-emerald-500 animate-pulse" />
               <span>Platform Core Online</span>
             </div>
-            <a href="http://localhost:8000/api/v1/health" target="_blank" rel="noreferrer">
+            <a href={healthUrl} target="_blank" rel="noreferrer">
               <Button variant="outline" size="sm">
                 API Health
               </Button>
@@ -128,13 +158,13 @@ export function AppShell() {
       {/* Footer */}
       <footer className="border-t py-6 bg-background">
         <div className="container mx-auto px-4 sm:px-8 flex flex-col sm:flex-row items-center justify-between text-xs text-muted-foreground gap-4">
-          <p>© {new Date().getFullYear()} HUMANE Social-Impact Platform. Foundation Phase.</p>
+          <p>&copy; {new Date().getFullYear()} HUMANE Social-Impact Platform. Foundation Phase.</p>
           <div className="flex items-center gap-6">
             <span>Next.js 15 (App Router)</span>
-            <span>•</span>
+            <span>&bull;</span>
             <span>FastAPI Modular Monolith</span>
-            <span>•</span>
-            <span>PostgreSQL & Alembic</span>
+            <span>&bull;</span>
+            <span>PostgreSQL &amp; Alembic</span>
           </div>
         </div>
       </footer>

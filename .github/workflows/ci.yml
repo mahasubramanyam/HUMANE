@@ -5,15 +5,37 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish_images:
+        description: "Build and publish production container images"
+        required: false
+        type: boolean
+        default: false
+      deploy_to_production:
+        description: "Deploy to Azure Container Apps Production (malaysiawest)"
+        required: true
+        type: boolean
+        default: false
+      container_registry_type:
+        description: "Container registry strategy (ghcr or acr)"
+        required: true
+        type: choice
+        options:
+          - ghcr
+          - acr
+        default: ghcr
 
 permissions:
   contents: read
-  id-token: write  # Required for Azure OIDC authentication
-  packages: write  # For publishing images to GHCR if needed
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'rg-humane-prod-mw' }}
+  AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'malaysiawest' }}
 
 jobs:
   # ============================================================================
@@ -22,6 +44,8 @@ jobs:
   backend-ci:
     name: Backend Quality & Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -57,11 +81,13 @@ jobs:
           echo "Database migration script successfully validated."
 
   # ============================================================================
-  # 2. Frontend CI: Linting, Type-checking, Unit Tests & Production Build
+  # 2. Frontend CI: Linting, Type-checking, Unit Tests & Standalone Build
   # ============================================================================
   frontend-ci:
     name: Frontend Quality & Build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -93,76 +119,277 @@ jobs:
           cd frontend
           npm test
 
-      - name: Run Production Next.js Build
+      - name: Run Production Next.js Standalone Build (Container Mode)
         env:
-          # NEXT_PUBLIC_* vars are baked into the bundle at build time for static exports.
-          # Set NEXT_PUBLIC_API_URL here (from a repository secret or variable) so API
-          # calls added in future will resolve correctly without a rebuild.
-          # Leave empty during the presentation-only phase; the app makes no API calls yet.
-          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+          DOCKER_BUILD: "1"
+          NEXT_PUBLIC_APP_NAME: "HUMANE"
+          NEXT_PUBLIC_APP_ENV: "production"
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || secrets.NEXT_PUBLIC_API_URL || 'https://humane-api.internal/api/v1' }}
         run: |
           cd frontend
           npm run build
+          test -f .next/standalone/server.js
+
+      - name: Validate Azure Bicep Template
+        run: |
+          az bicep build --file infrastructure/azure/main.bicep --stdout > /dev/null
 
   # ============================================================================
-  # 3. Production Deployment: Triggered on main branch after CI passes
+  # 3. Container Image Build & Publishing (Frontend + Backend)
+  #    - Pull Requests: build without pushing (validation only)
+  #    - Push to main: build and push immutable tagged images
+  #    - Workflow Dispatch: publish if publish_images=true OR deploy_to_production=true
   # ============================================================================
-  deploy:
-    name: Deploy to Azure (Production)
-    needs: [frontend-ci, backend-ci]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+  container-images:
+    name: Build & Publish Container Images
+    needs: [backend-ci, frontend-ci]
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: ${{ steps.deploy-swa.outputs.static_web_app_url || steps.deploy-aca.outputs.app_url }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      backend_image: ${{ steps.build-push.outputs.backend_image }}
+      frontend_image: ${{ steps.build-push.outputs.frontend_image }}
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      registry_type: ${{ steps.meta.outputs.registry_type }}
+      registry_server: ${{ steps.registry.outputs.server }}
+      published: ${{ steps.meta.outputs.should_publish }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Check if Azure credentials or SWA deployment token are configured
-      - name: Verify Deployment Prerequisites
-        id: check-secrets
+      - name: Compute Image Publishing Policy & Metadata
+        id: meta
         run: |
-          if [ -n "${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}" ]; then
-            echo "mode=swa" >> $GITHUB_OUTPUT
-            echo "Deployment target: Azure Static Web Apps"
-          elif [ -n "${{ secrets.AZURE_CLIENT_ID }}" ] && [ -n "${{ secrets.AZURE_TENANT_ID }}" ] && [ -n "${{ secrets.AZURE_SUBSCRIPTION_ID }}" ]; then
-            echo "mode=oidc" >> $GITHUB_OUTPUT
-            echo "Deployment target: Azure OIDC Federation"
-          else
-            echo "mode=none" >> $GITHUB_OUTPUT
-            echo "::error ::Azure deployment secrets are not configured in repository settings. Set AZURE_STATIC_WEB_APPS_API_TOKEN or Azure OIDC credentials (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID) to deploy. Halting deployment to prevent misleading deployment success."
+          SHOULD_PUBLISH="false"
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            SHOULD_PUBLISH="true"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && ([ "${{ inputs.publish_images }}" = "true" ] || [ "${{ inputs.deploy_to_production }}" = "true" ]); then
+            SHOULD_PUBLISH="true"
+          fi
+
+          REG_TYPE="${{ inputs.container_registry_type || vars.CONTAINER_REGISTRY_TYPE || 'ghcr' }}"
+          SHORT_SHA="${GITHUB_SHA::12}"
+          VERSION_TAG="sha-${SHORT_SHA}-r${{ github.run_number }}"
+
+          echo "should_publish=${SHOULD_PUBLISH}" >> "$GITHUB_OUTPUT"
+          echo "registry_type=${REG_TYPE}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${VERSION_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Azure OIDC Credentials for ACR Publishing
+        if: steps.meta.outputs.registry_type == 'acr' && steps.meta.outputs.should_publish == 'true'
+        run: |
+          if [ -z "${{ secrets.AZURE_CLIENT_ID }}" ] || [ -z "${{ secrets.AZURE_TENANT_ID }}" ] || [ -z "${{ secrets.AZURE_SUBSCRIPTION_ID }}" ]; then
+            echo "::error ::Azure OIDC credentials (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID) are missing from repository secrets. Cannot authenticate to ACR."
             exit 1
           fi
 
-      # Deployment Path A: Azure Static Web Apps (Zero Cost, Free Tier, Instant Edge HTTPS)
-      - name: Deploy to Azure Static Web Apps
-        id: deploy-swa
-        if: steps.check-secrets.outputs.mode == 'swa'
-        uses: Azure/static-web-apps-deploy@v1
-        with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          action: "upload"
-          app_location: "/frontend"
-          output_location: "out"
-
-      # Deployment Path B: Azure Login via OIDC for Azure Container Apps / ARM
-      - name: Azure Login via OIDC
-        if: steps.check-secrets.outputs.mode == 'oidc'
+      - name: Authenticate to Azure via OIDC for ACR
+        if: steps.meta.outputs.registry_type == 'acr' && steps.meta.outputs.should_publish == 'true'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # Post-deployment Health Check
-      - name: Health Check Verification
-        if: steps.check-secrets.outputs.mode != 'none'
+      - name: Resolve Target Registry Server & Authenticate
+        id: registry
         run: |
-          TARGET_URL="${{ steps.deploy-swa.outputs.static_web_app_url || secrets.PRODUCTION_DEPLOYMENT_URL }}"
-          if [ -n "$TARGET_URL" ]; then
-            echo "Probing deployment at: $TARGET_URL"
-            curl -f -I -m 30 "$TARGET_URL" || (echo "Health probe failed" && exit 1)
-            echo "Health probe succeeded with 200 OK."
+          REG_TYPE="${{ steps.meta.outputs.registry_type }}"
+          SHOULD_PUB="${{ steps.meta.outputs.should_publish }}"
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+
+          if [ "$REG_TYPE" = "ghcr" ]; then
+            REG_SERVER="${{ vars.CONTAINER_REGISTRY_SERVER || 'ghcr.io' }}"
+            BACKEND_REPO="${REG_SERVER}/${OWNER_LC}/humane-backend"
+            FRONTEND_REPO="${REG_SERVER}/${OWNER_LC}/humane-frontend"
+            echo "server=${REG_SERVER}" >> "$GITHUB_OUTPUT"
+            echo "backend_repo=${BACKEND_REPO}" >> "$GITHUB_OUTPUT"
+            echo "frontend_repo=${FRONTEND_REPO}" >> "$GITHUB_OUTPUT"
+
+            if [ "$SHOULD_PUB" = "true" ]; then
+              echo ">>> Authenticating to GHCR using GITHUB_TOKEN"
+              echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            fi
+          else
+            # ACR resolution
+            if [ -n "${{ vars.CONTAINER_REGISTRY_SERVER }}" ]; then
+              REG_SERVER="${{ vars.CONTAINER_REGISTRY_SERVER }}"
+            elif [ "$SHOULD_PUB" = "true" ]; then
+              REG_SERVER=$(az acr list --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "[0].loginServer" -o tsv)
+              if [ -z "$REG_SERVER" ]; then
+                echo "::error ::No Azure Container Registry found in resource group ${{ env.AZURE_RESOURCE_GROUP }}. Set repository variable CONTAINER_REGISTRY_SERVER or provision the infrastructure first."
+                exit 1
+              fi
+            else
+              REG_SERVER="humaneacr.azurecr.io"
+            fi
+
+            ACR_NAME="${REG_SERVER%%.*}"
+            BACKEND_REPO="${REG_SERVER}/humane-backend"
+            FRONTEND_REPO="${REG_SERVER}/humane-frontend"
+            echo "server=${REG_SERVER}" >> "$GITHUB_OUTPUT"
+            echo "backend_repo=${BACKEND_REPO}" >> "$GITHUB_OUTPUT"
+            echo "frontend_repo=${FRONTEND_REPO}" >> "$GITHUB_OUTPUT"
+
+            if [ "$SHOULD_PUB" = "true" ]; then
+              echo ">>> Authenticating to ACR ($ACR_NAME) via Azure CLI"
+              az acr login --name "$ACR_NAME"
+            fi
           fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & Publish Production Container Images
+        id: build-push
+        run: |
+          TAG="${{ steps.meta.outputs.image_tag }}"
+          BACKEND_REPO="${{ steps.registry.outputs.backend_repo }}"
+          FRONTEND_REPO="${{ steps.registry.outputs.frontend_repo }}"
+          SHOULD_PUB="${{ steps.meta.outputs.should_publish }}"
+
+          BACKEND_IMAGE="${BACKEND_REPO}:${TAG}"
+          FRONTEND_IMAGE="${FRONTEND_REPO}:${TAG}"
+
+          echo "backend_image=${BACKEND_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=${FRONTEND_IMAGE}" >> "$GITHUB_OUTPUT"
+
+          PUSH_FLAG=""
+          if [ "$SHOULD_PUB" = "true" ]; then
+            PUSH_FLAG="--push"
+          fi
+
+          echo ">>> Building backend image: $BACKEND_IMAGE (push=$SHOULD_PUB)"
+          docker buildx build \
+            --file ./backend/Dockerfile \
+            --tag "$BACKEND_IMAGE" \
+            --tag "${BACKEND_REPO}:sha-${{ github.sha }}" \
+            $PUSH_FLAG \
+            ./backend
+
+          echo ">>> Building frontend image: $FRONTEND_IMAGE (push=$SHOULD_PUB)"
+          docker buildx build \
+            --file ./frontend/Dockerfile \
+            --build-arg NEXT_PUBLIC_APP_NAME="HUMANE" \
+            --build-arg NEXT_PUBLIC_APP_ENV="production" \
+            --build-arg NEXT_PUBLIC_API_URL="${{ vars.NEXT_PUBLIC_API_URL || secrets.NEXT_PUBLIC_API_URL }}" \
+            --tag "$FRONTEND_IMAGE" \
+            --tag "${FRONTEND_REPO}:sha-${{ github.sha }}" \
+            $PUSH_FLAG \
+            ./frontend
+
+  # ============================================================================
+  # 4. Production Deployment to Azure Container Apps (Malaysia West)
+  #    MANUALLY GATED: Only runs on workflow_dispatch with deploy_to_production=true
+  # ============================================================================
+  deploy:
+    name: Deploy to Azure Container Apps (Production)
+    needs: [backend-ci, frontend-ci, container-images]
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_to_production == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: production
+      url: ${{ steps.deploy-bicep.outputs.frontend_url }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Verify Images Were Successfully Published
+        run: |
+          if [ "${{ needs.container-images.outputs.published }}" != "true" ] || [ -z "${{ needs.container-images.outputs.backend_image }}" ] || [ -z "${{ needs.container-images.outputs.frontend_image }}" ]; then
+            echo "::error ::Container images were not published by container-images job. Deployment aborted to prevent deploying missing or unverified images."
+            exit 1
+          fi
+
+      - name: Verify Required Azure OIDC & Deployment Secrets (Never Printing Values)
+        env:
+          REGISTRY_PASSWORD: ${{ secrets.GHCR_READ_TOKEN || secrets.CONTAINER_REGISTRY_PASSWORD }}
+        run: |
+          MISSING=0
+          for SECRET_NAME in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID DB_ADMIN_USER DB_ADMIN_PASSWORD SESSION_SECRET_KEY CSRF_SECRET_KEY; do
+            val=""
+            case "$SECRET_NAME" in
+              AZURE_CLIENT_ID) val="${{ secrets.AZURE_CLIENT_ID }}" ;;
+              AZURE_TENANT_ID) val="${{ secrets.AZURE_TENANT_ID }}" ;;
+              AZURE_SUBSCRIPTION_ID) val="${{ secrets.AZURE_SUBSCRIPTION_ID }}" ;;
+              DB_ADMIN_USER) val="${{ secrets.DB_ADMIN_USER }}" ;;
+              DB_ADMIN_PASSWORD) val="${{ secrets.DB_ADMIN_PASSWORD }}" ;;
+              SESSION_SECRET_KEY) val="${{ secrets.SESSION_SECRET_KEY }}" ;;
+              CSRF_SECRET_KEY) val="${{ secrets.CSRF_SECRET_KEY }}" ;;
+            esac
+            if [ -z "$val" ]; then
+              echo "::error ::Required secret is missing or empty in repository secrets: $SECRET_NAME"
+              MISSING=1
+            fi
+          done
+
+          REG_TYPE="${{ needs.container-images.outputs.registry_type || inputs.container_registry_type || vars.CONTAINER_REGISTRY_TYPE || 'ghcr' }}"
+          if [ "$REG_TYPE" = "ghcr" ] && [ -z "$REGISTRY_PASSWORD" ]; then
+            echo "::error ::Missing repository secret GHCR_READ_TOKEN (or CONTAINER_REGISTRY_PASSWORD). When deploying Container Apps with GHCR, Azure Container Apps requires a persistent GitHub Personal Access Token with read:packages scope stored in Key Vault to authenticate image pulls."
+            MISSING=1
+          fi
+
+          if [ "$MISSING" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Bicep Infrastructure & Container Apps
+        id: deploy-bicep
+        env:
+          DB_ADMIN_USER: ${{ secrets.DB_ADMIN_USER }}
+          DB_ADMIN_PASSWORD: ${{ secrets.DB_ADMIN_PASSWORD }}
+          SESSION_SECRET_KEY: ${{ secrets.SESSION_SECRET_KEY }}
+          CSRF_SECRET_KEY: ${{ secrets.CSRF_SECRET_KEY }}
+          REGISTRY_PASSWORD: ${{ secrets.GHCR_READ_TOKEN || secrets.CONTAINER_REGISTRY_PASSWORD }}
+        run: |
+          DEPLOYMENT_JSON=$(az deployment group create \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --template-file infrastructure/azure/main.bicep \
+            --parameters \
+              environment=prod \
+              location="${{ env.AZURE_LOCATION }}" \
+              dbAdminUser="$DB_ADMIN_USER" \
+              dbAdminPassword="$DB_ADMIN_PASSWORD" \
+              backendImage="${{ needs.container-images.outputs.backend_image }}" \
+              frontendImage="${{ needs.container-images.outputs.frontend_image }}" \
+              postgresNetworkingMode="${{ vars.POSTGRES_NETWORKING_MODE || 'privateVnet' }}" \
+              sessionSecretKey="$SESSION_SECRET_KEY" \
+              csrfSecretKey="$CSRF_SECRET_KEY" \
+              frontendOrigin="${{ vars.FRONTEND_ORIGIN }}" \
+              containerRegistryType="${{ needs.container-images.outputs.registry_type || inputs.container_registry_type || vars.CONTAINER_REGISTRY_TYPE || 'ghcr' }}" \
+              containerRegistryServer="${{ needs.container-images.outputs.registry_server || vars.CONTAINER_REGISTRY_SERVER || 'ghcr.io' }}" \
+              containerRegistryUsername="${{ github.repository_owner }}" \
+              containerRegistryPassword="$REGISTRY_PASSWORD" \
+            --query "properties.outputs" \
+            --output json)
+
+          FRONTEND_URL=$(echo "$DEPLOYMENT_JSON" | jq -r '.frontendUrl.value')
+          BACKEND_URL=$(echo "$DEPLOYMENT_JSON" | jq -r '.backendUrl.value')
+          BACKEND_HEALTH_URL=$(echo "$DEPLOYMENT_JSON" | jq -r '.backendHealthUrl.value')
+
+          echo "frontend_url=${FRONTEND_URL}" >> "$GITHUB_OUTPUT"
+          echo "backend_url=${BACKEND_URL}" >> "$GITHUB_OUTPUT"
+          echo "backend_health_url=${BACKEND_HEALTH_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Frontend & Backend Health Probes
+        run: |
+          echo "Probing Backend Liveness: ${{ steps.deploy-bicep.outputs.backend_url }}/healthz"
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 "${{ steps.deploy-bicep.outputs.backend_url }}/healthz"
+
+          echo "Probing Backend API v1 Health: ${{ steps.deploy-bicep.outputs.backend_health_url }}"
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 "${{ steps.deploy-bicep.outputs.backend_health_url }}"
+
+          echo "Probing Frontend Container App: ${{ steps.deploy-bicep.outputs.frontend_url }}"
+          curl --fail --silent --show-error --head --retry 5 --retry-delay 5 "${{ steps.deploy-bicep.outputs.frontend_url }}"

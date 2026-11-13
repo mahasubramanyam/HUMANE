@@ -1,6 +1,7 @@
 .git
 .github
 .next
+out
 .vscode
 .idea
 node_modules
@@ -12,3 +13,6 @@ coverage
 e2e
 tests
 *.tsbuildinfo
+.env
+.env.*
+!.env.example

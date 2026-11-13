@@ -8,10 +8,10 @@ param (
     [string]$SubscriptionId,
 
     [Parameter(Mandatory=$false)]
-    [string]$ResourceGroupName = "rg-humane-prod",
+    [string]$ResourceGroupName = "rg-humane-prod-mw",
 
     [Parameter(Mandatory=$false)]
-    [string]$Location = "centralindia",
+    [string]$Location = "malaysiawest",
 
     [Parameter(Mandatory=$false)]
     [string]$GitHubOrg = "mahasubramanyam",

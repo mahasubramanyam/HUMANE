@@ -5,8 +5,8 @@
 set -euo pipefail
 
 SUBSCRIPTION_ID="${1:-}"
-RESOURCE_GROUP="${2:-rg-humane-prod}"
-LOCATION="${3:-centralindia}"
+RESOURCE_GROUP="${2:-rg-humane-prod-mw}"
+LOCATION="${3:-malaysiawest}"
 GITHUB_ORG="${4:-mahasubramanyam}"
 GITHUB_REPO="${5:-HUMANE}"
 
