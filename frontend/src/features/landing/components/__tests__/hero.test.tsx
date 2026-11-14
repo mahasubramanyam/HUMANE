@@ -50,16 +50,27 @@ describe("Hero Component", () => {
     ).toBeInTheDocument();
   });
 
-  it("applies alternating vertical animation classes and styles to the image panels", () => {
+  it("applies alternating vertical animation classes, speeds, and styles to the image panels", () => {
     const { container } = render(<Hero />);
-    const upPanels = container.querySelectorAll(".hero-panel-up");
-    const downPanels = container.querySelectorAll(".hero-panel-down");
-    const subtlePanels = container.querySelectorAll(".hero-panel-subtle");
+    const desktopPanelWrappers = container.querySelectorAll(".hidden.md\\:grid .will-change-transform");
+    expect(desktopPanelWrappers.length).toBe(5);
 
-    // 3 panels alternate up (0, 2, 4) and 2 panels alternate down (1, 3)
-    expect(upPanels.length).toBe(3);
-    expect(downPanels.length).toBe(2);
+    // Verify exact refined durations for all 5 panels
+    expect(desktopPanelWrappers[0]).toHaveStyle({ animationDuration: "16s" });
+    expect(desktopPanelWrappers[1]).toHaveStyle({ animationDuration: "18s" });
+    expect(desktopPanelWrappers[2]).toHaveStyle({ animationDuration: "15s" });
+    expect(desktopPanelWrappers[3]).toHaveStyle({ animationDuration: "17s" });
+    expect(desktopPanelWrappers[4]).toHaveStyle({ animationDuration: "14s" });
+
+    // Verify alternating directions
+    expect(desktopPanelWrappers[0]).toHaveClass("hero-panel-up");
+    expect(desktopPanelWrappers[1]).toHaveClass("hero-panel-down");
+    expect(desktopPanelWrappers[2]).toHaveClass("hero-panel-up");
+    expect(desktopPanelWrappers[3]).toHaveClass("hero-panel-down");
+    expect(desktopPanelWrappers[4]).toHaveClass("hero-panel-up");
+
     // Mobile composite uses subtle float
+    const subtlePanels = container.querySelectorAll(".hero-panel-subtle");
     expect(subtlePanels.length).toBe(1);
   });
 

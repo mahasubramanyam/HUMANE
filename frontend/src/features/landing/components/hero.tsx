@@ -17,7 +17,7 @@ const heroPanels: HeroPanel[] = [
     alt: "Children in a community setting smiling together",
     label: "Community",
     direction: "up",
-    duration: 22,
+    duration: 16,
     delay: 0,
   },
   {
@@ -25,32 +25,32 @@ const heroPanels: HeroPanel[] = [
     alt: "Volunteers unloading food aid supplies from a relief vehicle",
     label: "Relief",
     direction: "down",
-    duration: 28,
-    delay: -5,
+    duration: 18,
+    delay: -4,
   },
   {
     src: "/images/hero/panel_3.jpg",
     alt: "Tender close-up of hands holding and comforting each other",
     label: "Empathy",
     direction: "up",
-    duration: 24,
-    delay: -11,
+    duration: 15,
+    delay: -8,
   },
   {
     src: "/images/hero/panel_4.jpg",
     alt: "Healthcare and aid volunteer distributing meal packages",
     label: "Support",
     direction: "down",
-    duration: 26,
-    delay: -7,
+    duration: 17,
+    delay: -5,
   },
   {
     src: "/images/hero/panel_5.jpg",
     alt: "Gentle elderly hands resting together in care",
     label: "Dignity",
     direction: "up",
-    duration: 20,
-    delay: -15,
+    duration: 14,
+    delay: -10,
   },
 ];
 
@@ -72,7 +72,7 @@ export function Hero() {
             >
               {/* Animated inner wrapper with vertical over-bleed to prevent edge clipping during motion */}
               <div
-                className={`absolute -top-[8%] -bottom-[8%] left-0 right-0 w-full h-[116%] will-change-transform ${
+                className={`absolute -top-[10%] -bottom-[10%] left-0 right-0 w-full h-[120%] will-change-transform ${
                   panel.direction === "up" ? "hero-panel-up" : "hero-panel-down"
                 }`}
                 style={{
@@ -96,8 +96,8 @@ export function Hero() {
         {/* Mobile / Tablet composite layout with subtle gentle movement */}
         <div className="md:hidden relative h-full w-full overflow-hidden">
           <div
-            className="absolute -top-[6%] -bottom-[6%] left-0 right-0 w-full h-[112%] will-change-transform hero-panel-subtle"
-            style={{ animationDuration: "25s" }}
+            className="absolute -top-[8%] -bottom-[8%] left-0 right-0 w-full h-[116%] will-change-transform hero-panel-subtle"
+            style={{ animationDuration: "18s" }}
           >
             <Image
               src="/images/hero/hero-collage.jpg"
@@ -111,13 +111,13 @@ export function Hero() {
         </div>
 
         {/* 1. Top Edge Gradient: Navbar clearance, readable navigation links, and elegant visual fade */}
-        <div className="absolute top-0 inset-x-0 h-36 sm:h-48 bg-gradient-to-b from-neutral-950 via-neutral-950/60 to-transparent pointer-events-none z-[1]" />
+        <div className="absolute top-0 inset-x-0 h-32 sm:h-44 bg-gradient-to-b from-neutral-950/80 via-neutral-950/40 to-transparent pointer-events-none z-[1]" />
 
         {/* 2. Bottom Edge Gradient: Soft visual dissolve into subsequent sections */}
-        <div className="absolute bottom-0 inset-x-0 h-44 sm:h-64 bg-gradient-to-t from-neutral-950 via-neutral-950/70 to-transparent pointer-events-none z-[1]" />
+        <div className="absolute bottom-0 inset-x-0 h-40 sm:h-60 bg-gradient-to-t from-neutral-950 via-neutral-950/50 to-transparent pointer-events-none z-[1]" />
 
-        {/* 3. Subtle Central Radial Dark Vignette: Keeps center typography crisp while leaving outer photography vivid and bright */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(10,10,10,0.65)_0%,_rgba(10,10,10,0.40)_50%,_rgba(10,10,10,0.20)_80%,_rgba(10,10,10,0.30)_100%)] pointer-events-none z-[1]" />
+        {/* 3. Subtle Central Radial Dark Vignette: Balanced 0.42 central opacity and 0.12-0.18 outer opacity for bright, detailed, natural photography */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(10,10,10,0.42)_0%,_rgba(10,10,10,0.25)_50%,_rgba(10,10,10,0.12)_80%,_rgba(10,10,10,0.18)_100%)] pointer-events-none z-[1]" />
       </div>
 
       {/* Top Spacer for Navigation Clearance */}

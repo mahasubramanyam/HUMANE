@@ -73,21 +73,21 @@ const config: Config = {
       keyframes: {
         "hero-float-up": {
           "0%, 100%": { transform: "translateY(0)" },
-          "50%": { transform: "translateY(-24px)" },
+          "50%": { transform: "translateY(-30px)" },
         },
         "hero-float-down": {
           "0%, 100%": { transform: "translateY(0)" },
-          "50%": { transform: "translateY(24px)" },
+          "50%": { transform: "translateY(30px)" },
         },
         "hero-float-subtle": {
           "0%, 100%": { transform: "translateY(0)" },
-          "50%": { transform: "translateY(-12px)" },
+          "50%": { transform: "translateY(-16px)" },
         },
       },
       animation: {
-        "hero-float-up": "hero-float-up 22s ease-in-out infinite",
-        "hero-float-down": "hero-float-down 26s ease-in-out infinite",
-        "hero-float-subtle": "hero-float-subtle 24s ease-in-out infinite",
+        "hero-float-up": "hero-float-up 16s ease-in-out infinite",
+        "hero-float-down": "hero-float-down 18s ease-in-out infinite",
+        "hero-float-subtle": "hero-float-subtle 18s ease-in-out infinite",
       },
     },
   },
