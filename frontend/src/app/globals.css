@@ -92,3 +92,51 @@
     @apply bg-background text-foreground antialiased selection:bg-neutral-800 selection:text-white;
   }
 }
+
+@keyframes hero-float-up {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-24px);
+  }
+}
+
+@keyframes hero-float-down {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(24px);
+  }
+}
+
+@keyframes hero-float-subtle {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+
+@layer utilities {
+  .hero-panel-up {
+    animation: hero-float-up 22s ease-in-out infinite;
+  }
+  .hero-panel-down {
+    animation: hero-float-down 26s ease-in-out infinite;
+  }
+  .hero-panel-subtle {
+    animation: hero-float-subtle 24s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-panel-up,
+  .hero-panel-down,
+  .hero-panel-subtle {
+    animation: none !important;
+    transform: none !important;
+  }
+}

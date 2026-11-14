@@ -2,31 +2,55 @@ import Link from "next/link";
 import Image from "next/image";
 import { ArrowDown, ArrowRight } from "lucide-react";
 
-const heroPanels = [
+interface HeroPanel {
+  src: string;
+  alt: string;
+  label: string;
+  direction: "up" | "down";
+  duration: number;
+  delay: number;
+}
+
+const heroPanels: HeroPanel[] = [
   {
     src: "/images/hero/panel_1.jpg",
     alt: "Children in a community setting smiling together",
     label: "Community",
+    direction: "up",
+    duration: 22,
+    delay: 0,
   },
   {
     src: "/images/hero/panel_2.jpg",
     alt: "Volunteers unloading food aid supplies from a relief vehicle",
     label: "Relief",
+    direction: "down",
+    duration: 28,
+    delay: -5,
   },
   {
     src: "/images/hero/panel_3.jpg",
     alt: "Tender close-up of hands holding and comforting each other",
     label: "Empathy",
+    direction: "up",
+    duration: 24,
+    delay: -11,
   },
   {
     src: "/images/hero/panel_4.jpg",
     alt: "Healthcare and aid volunteer distributing meal packages",
     label: "Support",
+    direction: "down",
+    duration: 26,
+    delay: -7,
   },
   {
     src: "/images/hero/panel_5.jpg",
     alt: "Gentle elderly hands resting together in care",
     label: "Dignity",
+    direction: "up",
+    duration: 20,
+    delay: -15,
   },
 ];
 
@@ -37,39 +61,63 @@ export function Hero() {
       className="relative min-h-screen w-full flex flex-col justify-between items-center text-center overflow-hidden bg-neutral-950 pt-20 pb-10"
       aria-label="HUMANE Hero Overview"
     >
-      {/* Background Photographic Composition: 5-column documentary collage */}
-      <div className="absolute inset-0 w-full h-full select-none pointer-events-none" aria-hidden="true">
-        {/* Desktop 5-panel layout */}
+      {/* Background Photographic Composition: 5-column documentary collage with continuous vertical motion */}
+      <div className="absolute inset-0 w-full h-full select-none pointer-events-none overflow-hidden" aria-hidden="true">
+        {/* Desktop 5-panel layout with staggered, continuous vertical drifting */}
         <div className="hidden md:grid grid-cols-5 h-full w-full">
           {heroPanels.map((panel, idx) => (
-            <div key={idx} className="relative h-full w-full overflow-hidden border-r border-white/5 last:border-r-0">
-              <Image
-                src={panel.src}
-                alt={panel.alt}
-                fill
-                priority={idx < 3}
-                sizes="20vw"
-                className="object-cover object-center transform transition-transform duration-1000 ease-out hover:scale-105"
-              />
+            <div
+              key={idx}
+              className="relative h-full w-full overflow-hidden border-r border-white/10 last:border-r-0"
+            >
+              {/* Animated inner wrapper with vertical over-bleed to prevent edge clipping during motion */}
+              <div
+                className={`absolute -top-[8%] -bottom-[8%] left-0 right-0 w-full h-[116%] will-change-transform ${
+                  panel.direction === "up" ? "hero-panel-up" : "hero-panel-down"
+                }`}
+                style={{
+                  animationDuration: `${panel.duration}s`,
+                  animationDelay: `${panel.delay}s`,
+                }}
+              >
+                <Image
+                  src={panel.src}
+                  alt={panel.alt}
+                  fill
+                  priority={idx < 3}
+                  sizes="20vw"
+                  className="object-cover object-center brightness-[1.08] contrast-[1.08] saturate-[1.08] transition-transform duration-700 ease-out hover:scale-105"
+                />
+              </div>
             </div>
           ))}
         </div>
 
-        {/* Mobile / Tablet composite layout (prevents narrow column distortion on smaller screens) */}
-        <div className="md:hidden relative h-full w-full">
-          <Image
-            src="/images/hero/hero-collage.jpg"
-            alt="Humanitarian photographic collage depicting volunteers and community members"
-            fill
-            priority
-            sizes="100vw"
-            className="object-cover object-center"
-          />
+        {/* Mobile / Tablet composite layout with subtle gentle movement */}
+        <div className="md:hidden relative h-full w-full overflow-hidden">
+          <div
+            className="absolute -top-[6%] -bottom-[6%] left-0 right-0 w-full h-[112%] will-change-transform hero-panel-subtle"
+            style={{ animationDuration: "25s" }}
+          >
+            <Image
+              src="/images/hero/hero-collage.jpg"
+              alt="Humanitarian photographic collage depicting volunteers and community members"
+              fill
+              priority
+              sizes="100vw"
+              className="object-cover object-center brightness-[1.08] contrast-[1.08] saturate-[1.08]"
+            />
+          </div>
         </div>
 
-        {/* Dark Translucent Overlay & Subtle Vignette for Maximum Contrast */}
-        <div className="absolute inset-0 bg-neutral-950/60 backdrop-brightness-75 transition-opacity" />
-        <div className="absolute inset-0 bg-gradient-to-t from-neutral-950 via-transparent to-black/40" />
+        {/* 1. Top Edge Gradient: Navbar clearance, readable navigation links, and elegant visual fade */}
+        <div className="absolute top-0 inset-x-0 h-36 sm:h-48 bg-gradient-to-b from-neutral-950 via-neutral-950/60 to-transparent pointer-events-none z-[1]" />
+
+        {/* 2. Bottom Edge Gradient: Soft visual dissolve into subsequent sections */}
+        <div className="absolute bottom-0 inset-x-0 h-44 sm:h-64 bg-gradient-to-t from-neutral-950 via-neutral-950/70 to-transparent pointer-events-none z-[1]" />
+
+        {/* 3. Subtle Central Radial Dark Vignette: Keeps center typography crisp while leaving outer photography vivid and bright */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(10,10,10,0.65)_0%,_rgba(10,10,10,0.40)_50%,_rgba(10,10,10,0.20)_80%,_rgba(10,10,10,0.30)_100%)] pointer-events-none z-[1]" />
       </div>
 
       {/* Top Spacer for Navigation Clearance */}
@@ -78,26 +126,26 @@ export function Hero() {
       {/* Main Hero Foreground Content */}
       <div className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col items-center">
         {/* Uppercase Introductory Phrase */}
-        <p className="text-xs sm:text-sm uppercase tracking-[0.25em] font-semibold text-white/90 drop-shadow-sm mb-3 sm:mb-4">
+        <p className="text-xs sm:text-sm uppercase tracking-[0.25em] font-semibold text-white/90 drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)] mb-3 sm:mb-4">
           Every Act of Kindness Matters
         </p>
 
         {/* Hero Wordmark (HUMANE) */}
-        <h1 className="text-5xl sm:text-7xl md:text-8xl lg:text-9xl font-black tracking-tight text-white select-none drop-shadow-md leading-none">
+        <h1 className="text-5xl sm:text-7xl md:text-8xl lg:text-9xl font-black tracking-tight text-white select-none drop-shadow-[0_4px_24px_rgba(0,0,0,0.9)] leading-none">
           HUMANE
         </h1>
 
         {/* Emotional Tagline */}
-        <p className="text-xl sm:text-2xl md:text-3xl font-medium text-white/95 mt-4 sm:mt-6 tracking-normal drop-shadow-sm">
+        <p className="text-xl sm:text-2xl md:text-3xl font-medium text-white/95 mt-4 sm:mt-6 tracking-normal drop-shadow-[0_2px_12px_rgba(0,0,0,0.85)]">
           Humanity begins with us.
         </p>
 
         {/* Supporting Clarifying Text */}
-        <p className="text-sm sm:text-base md:text-lg text-white/80 max-w-2xl mx-auto mt-3 leading-relaxed drop-shadow-sm">
+        <p className="text-sm sm:text-base md:text-lg text-white/85 max-w-2xl mx-auto mt-3 leading-relaxed drop-shadow-[0_2px_10px_rgba(0,0,0,0.85)]">
           Connecting people, organisations and purpose to create meaningful social impact.
         </p>
 
-        {/* Action Buttons matching reference video */}
+        {/* Action Buttons matching reference design */}
         <div className="mt-8 sm:mt-10 flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
           {/* Primary CTA: Join HUMANE */}
           <Link
@@ -111,14 +159,14 @@ export function Hero() {
           {/* Secondary CTA: Our Mission */}
           <a
             href="#mission"
-            className="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-white/80 bg-black/20 backdrop-blur-sm px-8 py-3.5 text-sm sm:text-base font-semibold text-white shadow-sm transition-all hover:bg-white/15 hover:border-white active:scale-95"
+            className="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-white/80 bg-black/30 backdrop-blur-md px-8 py-3.5 text-sm sm:text-base font-semibold text-white shadow-sm transition-all hover:bg-white/20 hover:border-white active:scale-95"
           >
             Our Mission
           </a>
         </div>
       </div>
 
-      {/* Bottom Scroll Indicator matching reference video */}
+      {/* Bottom Scroll Indicator matching reference design */}
       <div className="relative z-10 flex flex-col items-center mt-8 sm:mt-12 text-white/80 transition-colors hover:text-white">
         <a
           href="#about"

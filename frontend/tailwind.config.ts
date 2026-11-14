@@ -70,6 +70,25 @@ const config: Config = {
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
       },
+      keyframes: {
+        "hero-float-up": {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-24px)" },
+        },
+        "hero-float-down": {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(24px)" },
+        },
+        "hero-float-subtle": {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-12px)" },
+        },
+      },
+      animation: {
+        "hero-float-up": "hero-float-up 22s ease-in-out infinite",
+        "hero-float-down": "hero-float-down 26s ease-in-out infinite",
+        "hero-float-subtle": "hero-float-subtle 24s ease-in-out infinite",
+      },
     },
   },
   plugins: [],
